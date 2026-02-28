@@ -1,20 +1,22 @@
-chrome.runtime.onInstalled.addListener(() => {
+const ext = typeof browser !== "undefined" ? browser : chrome;
+
+ext.runtime.onInstalled.addListener(() => {
   // Right click on the page
-  chrome.contextMenus.create({
+  ext.contextMenus.create({
     id: "opsle-store-page-link",
     title: "Store Page Link and Title",
     contexts: ["page"]
   });
 
   // Right click on the link
-  chrome.contextMenus.create({
+  ext.contextMenus.create({
     id: "opsle-store-link",
     title: "Store Link and Title",
     contexts: ["link"]
   });
 
   // Right click on the selection
-  chrome.contextMenus.create({
+  ext.contextMenus.create({
     id: "opsle-store-selection",
     title: "Store Page Link and Selection",
     contexts: ["selection"]
@@ -22,7 +24,7 @@ chrome.runtime.onInstalled.addListener(() => {
 });
 
 function openOrgProtocol(tab, data) {
-  if (!data.url) {
+  if (!tab || !tab.id || !data || !data.url) {
     console.error("No URL provided.");
     return;
   }
@@ -34,36 +36,44 @@ function openOrgProtocol(tab, data) {
 
   const orgUrl = `org-protocol://store-link?${params.toString()}`;
 
-  chrome.scripting.executeScript({
-    target: { tabId: tab.id },
-    func: (url) => {
-      location.href = url;
-    },
-    args: [orgUrl]
+  ext.tabs.sendMessage(tab.id, { type: "openOrgProtocol", url: orgUrl }, (response) => {
+    if (ext.runtime.lastError || !response || response.ok !== true) {
+      ext.tabs.create({ url: orgUrl });
+    }
   });
 }
 
-chrome.action.onClicked.addListener((tab) => {
-  openOrgProtocol(tab, { url: tab.url, title: tab.title });
-});
+if (ext.action && ext.action.onClicked) {
+  ext.action.onClicked.addListener((tab) => {
+    openOrgProtocol(tab, { url: tab.url, title: tab.title });
+  });
+} else if (ext.browserAction && ext.browserAction.onClicked) {
+  ext.browserAction.onClicked.addListener((tab) => {
+    openOrgProtocol(tab, { url: tab.url, title: tab.title });
+  });
+}
 
-chrome.contextMenus.onClicked.addListener((info, tab) => {
+ext.contextMenus.onClicked.addListener((info, tab) => {
   switch (info.menuItemId) {
   case "opsle-store-page-link":
     openOrgProtocol(tab, { url: info.pageUrl, title: tab.title });
     break;
   case "opsle-store-link":
+    if (info.linkUrl) {
+      const fallbackTitle = info.linkText && info.linkText.trim() ? info.linkText.trim() : info.linkUrl;
+      openOrgProtocol(tab, { url: info.linkUrl, title: fallbackTitle });
+      break;
+    }
+
     if (tab && tab.id) {
-      chrome.tabs.sendMessage(tab.id, "getOPSLELinkData", (response) => {
-        if (chrome.runtime.lastError) {
+      ext.tabs.sendMessage(tab.id, "getOPSLELinkData", (response) => {
+        if (ext.runtime.lastError || !response || !response.linkUrl) {
           console.warn("Could not connect to the content script.");
-          const linkUrl = response.linkUrl;
-          openOrgProtocol(tab, { url: linkUrl, title: linkUrl });
           return;
         }
 
         const linkUrl = response.linkUrl;
-        let linkTitle = response && response.title ? response.title : linkUrl;
+        const linkTitle = response.title ? response.title : linkUrl;
 
         openOrgProtocol(tab, { url: linkUrl, title: linkTitle });
       });
